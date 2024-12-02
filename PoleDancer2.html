@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pole Dancer Dashboard</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <!-- Custom Styles -->
+    <style>
+        #map {
+            height: 600px;
+            width: 100%;
+        }
+        .tooltip-content {
+            font-size: 14px;
+        }
+        #sensor-table {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: collapse;
+        }
+        #sensor-table th, #sensor-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        #sensor-table th {
+            background-color: #f2f2f2;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Table to display sensor data -->
+    <table id="sensor-table">
+        <thead>
+            <tr>
+                <th>Serial Number</th>
+                <th>Latitude</th>
+                <th>Longitude</th>
+                <th>Pitch</th>
+                <th>Roll</th>
+                <th>Yaw</th>
+                <th>Temperature</th>
+                <th>Pressure Mb</th>
+            </tr>
+        </thead>
+        <tbody id="sensor-data-body">
+            <!-- Sensor data rows will be updated here -->
+        </tbody>
+    </table>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+
+    <script>
+        const map = L.map('map').setView([39.6438, -77.7199], 13); // Hagerstown, MD coordinates
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        const markers = L.markerClusterGroup();
+        map.addLayer(markers);
+
+        const markersDict = {}; // Store markers by sensor id
+        const sensorTableRows = {}; // Store table rows by sensor id
+
+        function fetchSensorData() {
+            fetch('/api/sensor_data')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Network response was not ok: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.length === 0) {
+                        alert('No sensor data available.');
+                        return;
+                    }
+
+                    const bounds = [];
+
+                    data.forEach(sensor => {
+                        const { id, lat, Longi, pitch, roll, yaw, Temperature, Pressure } = sensor;
+
+                        if (typeof lat !== 'number' || typeof Longi !== 'number') {
+                            console.warn('Invalid latitude or longitude:', sensor);
+                            return;
+                        }
+
+                        // Update or create the marker
+                        if (markersDict[id]) {
+                            // Update marker position
+                            markersDict[id].setLatLng([lat, Longi]);
+                        } else {
+                            // Create a new marker
+                            const marker = L.marker([lat, Longi]);
+
+                            // Create tooltip content
+                            const tooltipContent = `
+                                <div class="tooltip-content">
+                                    <strong>Serial Number: ${id}</strong><br/>
+                                    Pitch: ${pitch}<br/>
+                                    Roll: ${roll}<br/>
+                                    Yaw: ${yaw}
+                                </div>
+                            `;
+
+                            marker.bindTooltip(tooltipContent, {
+                                direction: 'top',
+                                offset: [0, -10],
+                                opacity: 0.9,
+                                sticky: true
+                            });
+
+                            // Add marker to the cluster group
+                            markers.addLayer(marker);
+
+                            // Save marker to dictionary
+                            markersDict[id] = marker;
+                        }
+
+                        // Extend bounds to include the marker's position
+                        bounds.push([lat, Longi]);
+
+                        // Update or create the table row
+                        if (sensorTableRows[id]) {
+                            // Update existing row
+                            const row = sensorTableRows[id];
+                            row.innerHTML = `
+                                <td>${id}</td>
+                                <td>${lat}</td>
+                                <td>${Longi}</td>
+                                <td>${pitch}</td>
+                                <td>${roll}</td>
+                                <td>${yaw}</td>
+                                <td>${Temperature}</td>
+                                <td>${Pressure}</td>
+                            `;
+                        } else {
+                            // Create a new row
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${id}</td>
+                                <td>${lat}</td>
+                                <td>${Longi}</td>
+                                <td>${pitch}</td>
+                                <td>${roll}</td>
+                                <td>${yaw}</td>
+                                <td>${Temperature}</td>
+                                <td>${Pressure}</td>
+                            `;
+                            document.getElementById('sensor-data-body').appendChild(row);
+
+                            // Save row to dictionary
+                            sensorTableRows[id] = row;
+                        }
+                    });
+
+                    // Adjust map view to fit all markers
+                    if (bounds.length > 0) {
+                        map.fitBounds(bounds, { padding: [50, 50] });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching sensor data:', error);
+                    alert('Failed to load sensor data.');
+                });
+        }
+
+        setInterval(fetchSensorData, 3000); // Fetch new data every 3 seconds
+    </script>
+</body>
+</html>
