@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pole Dancer Dashboard</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <!-- Custom Styles -->
+    <style>
+        #map {
+            height: 600px;
+            width: 100%;
+        }
+        .tooltip-content {
+            font-size: 14px;
+        }
+        #sensor-table {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: collapse;
+        }
+        #sensor-table th, #sensor-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        #sensor-table th {
+            background-color: #f2f2f2;
+            text-align: left;
+        }
+        .status-box {
+            width: 20px;
+            height: 20px;
+            display: inline-block;
+        }
+        .green-box {
+            background-color: green;
+        }
+        .yellow-box {
+            background-color: yellow;
+        }
+        .red-box {
+            background-color: red;
+        }
+        #center-map-button {
+            margin: 10px 0;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        #center-map-button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Center Map Button -->
+    <button id="center-map-button">Center Map on Points</button>
+
+    <!-- Table to display sensor data -->
+    <table id="sensor-table">
+        <thead>
+            <tr>
+                <th>Serial Number</th>
+                <th>Status</th>
+                <th>Latitude</th>
+                <th>Longitude</th>
+                <th>Pitch</th>
+                <th>Roll</th>
+                <th>Yaw</th>
+                <th>Temperature</th>
+                <th>Pressure Mb</th>
+                <th>Timestamp</th>
+                <th>Time Since Update</th> <!-- Updated column title -->
+            </tr>
+        </thead>
+        <tbody id="sensor-data-body">
+            <!-- Sensor data rows will be updated here -->
+        </tbody>
+    </table>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+
+    <script>
+        const map = L.map('map').setView([39.6438, -77.7199], 13); // Hagerstown, MD coordinates
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        const markers = L.markerClusterGroup();
+        map.addLayer(markers);
+
+        const markersDict = {}; // Store markers by sensor id
+        const sensorTableRows = {}; // Store table rows by sensor id
+
+        function determineStatusBox(pitch, roll) {
+            const absPitch = Math.abs(pitch);
+            const absRoll = Math.abs(roll);
+            const maxVal = Math.max(absPitch, absRoll);
+            if (maxVal < 50) {
+                return '<span class="status-box green-box"></span>';
+            } else if (maxVal >= 50 && maxVal < 120) {
+                return '<span class="status-box yellow-box"></span>';
+            } else if (maxVal >= 120 && maxVal < 180) {
+                return '<span class="status-box red-box"></span>';
+            }
+            return '';
+        }
+
+        function formatTimeSinceUpdate(milliseconds) {
+            const seconds = Math.floor(milliseconds / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const hours = Math.floor(minutes / 60);
+            const days = Math.floor(hours / 24);
+
+            const remainingHours = hours % 24;
+            const remainingMinutes = minutes % 60;
+
+            return `${days}d ${remainingHours}h ${remainingMinutes}m`;
+        }
+
+        function fetchSensorData() {
+            fetch('/api/sensor_data')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Network response was not ok: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.length === 0) {
+                        alert('No sensor data available.');
+                        return;
+                    }
+
+                    data.forEach(sensor => {
+                        const { id, lat, Longi, pitch, roll, yaw, Temperature, Pressure, Timestamp } = sensor;
+
+                        if (typeof lat !== 'number' || typeof Longi !== 'number') {
+                            console.warn('Invalid latitude or longitude:', sensor);
+                            return;
+                        }
+
+                        // Calculate time since last update
+                        const deviceTime = new Date(Timestamp).getTime(); // Convert Timestamp to milliseconds
+                        const currentTime = new Date().getTime();
+                        const timeSinceUpdate = formatTimeSinceUpdate(currentTime - deviceTime);
+
+                        // Update or create the marker
+                        if (markersDict[id]) {
+                            markersDict[id].setLatLng([lat, Longi]);
+                        } else {
+                            const marker = L.marker([lat, Longi]);
+
+                            const tooltipContent = `
+                                <div class="tooltip-content">
+                                    <strong>Serial Number: ${id}</strong><br/>
+                                    Pitch: ${pitch}<br/>
+                                    Roll: ${roll}<br/>
+                                    Yaw: ${yaw}<br/>
+                                    Timestamp: ${Timestamp}
+                                </div>
+                            `;
+                            marker.bindTooltip(tooltipContent, {
+                                direction: 'top',
+                                offset: [0, -10],
+                                opacity: 0.9,
+                                sticky: true
+                            });
+
+                            markers.addLayer(marker);
+                            markersDict[id] = marker;
+                        }
+
+                        // Update or create the table row
+                        if (sensorTableRows[id]) {
+                            const row = sensorTableRows[id];
+                            row.innerHTML = `
+                                <td>${id}</td>
+                                <td>${determineStatusBox(pitch, roll)}</td>
+                                <td>${lat}</td>
+                                <td>${Longi}</td>
+                                <td>${pitch}</td>
+                                <td>${roll}</td>
+                                <td>${yaw}</td>
+                                <td>${Temperature}</td>
+                                <td>${Pressure}</td>
+                                <td>${Timestamp}</td>
+                                <td>${timeSinceUpdate}</td> <!-- Updated column -->
+                            `;
+                        } else {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${id}</td>
+                                <td>${determineStatusBox(pitch, roll)}</td>
+                                <td>${lat}</td>
+                                <td>${Longi}</td>
+                                <td>${pitch}</td>
+                                <td>${roll}</td>
+                                <td>${yaw}</td>
+                                <td>${Temperature}</td>
+                                <td>${Pressure}</td>
+                                <td>${Timestamp}</td>
+                                <td>${timeSinceUpdate}</td> <!-- Updated column -->
+                            `;
+                            document.getElementById('sensor-data-body').appendChild(row);
+                            sensorTableRows[id] = row;
+                        }
+                    });
+                })
+                .catch(error => {
+                    console.error('Error fetching sensor data:', error);
+                    alert('Failed to load sensor data.');
+                });
+        }
+
+        // Separate function to center map on all points
+        function centerMapOnPoints() {
+            const bounds = Object.values(markersDict).map(marker => marker.getLatLng());
+            if (bounds.length > 0) {
+                map.fitBounds(bounds, { padding: [50, 50] });
+            } else {
+                alert('No markers to center on.');
+            }
+        }
+
+        // Attach event listener to the button
+        document.getElementById('center-map-button').addEventListener('click', centerMapOnPoints);
+
+        // Fetch data at regular intervals
+        setInterval(fetchSensorData, 1000);
+    </script>
+</body>
+</html>
